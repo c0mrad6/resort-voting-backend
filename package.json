@@ -1,0 +1,7 @@
+{
+  "name": "resort-voting",
+  "version": "1.0.0",
+  "dependencies": {
+    "google-spreadsheet": "^4.1.0"
+  }
+}
