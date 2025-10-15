@@ -2,7 +2,8 @@
   "name": "resort-voting",
   "version": "1.0.0",
   "dependencies": {
-    "google-spreadsheet": "^4.1.0"
+    "google-spreadsheet": "^4.1.0",
+    "google-auth-library": "^9.14.0"
   },
   "engines": {
     "node": "18.x"
