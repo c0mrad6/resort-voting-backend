@@ -1,52 +1,73 @@
 // netlify/functions/vote.js
 const { GoogleSpreadsheet } = require('google-spreadsheet');
+const { GoogleAuth } = require('google-auth-library');
 
 exports.handler = async (event, context) => {
+  // CORS Headers
+  const headers = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 204, headers, body: '' };
+  }
+
   if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: 'Method not allowed' };
+    return {
+      statusCode: 405,
+      headers,
+      body: JSON.stringify({ error: 'Method not allowed' }),
+    };
   }
 
   try {
     const body = JSON.parse(event.body);
     const { email, nominations } = body;
 
-    // Получаем IP
     const clientIP = event.headers['x-forwarded-for']?.split(',')[0].trim() || 
                      event.headers['x-real-ip'] || 'unknown';
 
     const now = new Date();
     const timestamp = now.toISOString();
 
-    // === Настройки Google ===
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-    const PRIVATE_KEY_RAW = process.env.GOOGLE_PRIVATE_KEY;
-if (!PRIVATE_KEY_RAW) {
-  console.error('GOOGLE_PRIVATE_KEY is missing!');
-  return { statusCode: 500, body: JSON.stringify({ error: 'Server misconfiguration' }) };
-}
-const PRIVATE_KEY = PRIVATE_KEY_RAW;
+    const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 
     if (!SHEET_ID || !CLIENT_EMAIL || !PRIVATE_KEY) {
-      return { statusCode: 500, body: 'Google credentials missing' };
+      console.error('Missing env vars:', { SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY: !!PRIVATE_KEY });
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: 'Server misconfiguration' }),
+      };
     }
 
-    // Подключаемся к таблице
-    const doc = new GoogleSpreadsheet(SHEET_ID);
-    await doc.useServiceAccountAuth({
-      client_email: CLIENT_EMAIL,
-      private_key: PRIVATE_KEY,
+    // ✅ Новая авторизация для google-spreadsheet v4+
+    const auth = new GoogleAuth({
+      credentials: {
+        client_email: CLIENT_EMAIL,
+        private_key: PRIVATE_KEY,
+      },
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
+
+    const doc = new GoogleSpreadsheet(SHEET_ID, auth);
     await doc.loadInfo();
 
     const votesSheet = doc.sheetsByTitle['votes'];
     const logSheet = doc.sheetsByTitle['ip_log'];
 
     if (!votesSheet || !logSheet) {
-      return { statusCode: 500, body: 'Sheets not found' };
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: 'Sheets not found' }),
+      };
     }
 
-    // === Проверка: голосовал ли IP за последние 24 часа? ===
     const rows = await logSheet.getRows();
     const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
 
@@ -58,18 +79,17 @@ const PRIVATE_KEY = PRIVATE_KEY_RAW;
     if (hasVoted) {
       return {
         statusCode: 403,
-        body: JSON.stringify({ error: 'Вы уже голосовали в последние 24 часа.' })
+        headers,
+        body: JSON.stringify({ error: 'Вы уже голосовали в последние 24 часа.' }),
       };
     }
 
-    // === Записываем голос ===
     await votesSheet.addRow({
       timestamp,
       email,
       ...nominations
     });
 
-    // === Логируем IP ===
     await logSheet.addRow({
       ip: clientIP,
       timestamp
@@ -77,15 +97,16 @@ const PRIVATE_KEY = PRIVATE_KEY_RAW;
 
     return {
       statusCode: 200,
-      body: JSON.stringify({ success: true, message: 'Ваш голос учтён!' })
+      headers,
+      body: JSON.stringify({ success: true, message: 'Ваш голос учтён!' }),
     };
 
   } catch (error) {
     console.error('Error:', error);
     return {
       statusCode: 500,
-      body: JSON.stringify({ error: 'Ошибка сервера' })
+      headers,
+      body: JSON.stringify({ error: 'Ошибка сервера' }),
     };
   }
 };
-//Trigger redeploy
