@@ -20,7 +20,12 @@ exports.handler = async (event, context) => {
     // === Настройки Google ===
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-    const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
+    const PRIVATE_KEY_RAW = process.env.GOOGLE_PRIVATE_KEY;
+if (!PRIVATE_KEY_RAW) {
+  console.error('GOOGLE_PRIVATE_KEY is missing!');
+  return { statusCode: 500, body: JSON.stringify({ error: 'Server misconfiguration' }) };
+}
+const PRIVATE_KEY = PRIVATE_KEY_RAW;
 
     if (!SHEET_ID || !CLIENT_EMAIL || !PRIVATE_KEY) {
       return { statusCode: 500, body: 'Google credentials missing' };
