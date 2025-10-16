@@ -34,7 +34,10 @@ exports.handler = async (event, context) => {
 
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
-    const PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+    let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
+if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
+  PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
+}
 
     if (!SHEET_ID || !CLIENT_EMAIL || !PRIVATE_KEY) {
       console.error('Missing env vars:', { SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY: !!PRIVATE_KEY });
