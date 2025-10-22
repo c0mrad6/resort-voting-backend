@@ -102,27 +102,23 @@ exports.handler = async (event, context) => {
       };
     }
 
-    // === 5. Проверка по IP (только последние 100 строк) ===
+    // === 5. Проверка по IP (исправлено!) ===
     let hasVoted = false;
     try {
-      const rows = await logSheet.getRows({ limit: 100 }); // ← ограничение!
+      const allRows = await logSheet.getRows({ limit: 500 });
       const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
 
-      console.log(`🔍 Проверка IP: ${clientIP}`);
-      console.log(`📅 24 часа назад: ${oneDayAgo.toISOString()}`);
-      console.log(`📄 Загружено строк из ip_log: ${rows.length}`);
-
-      hasVoted = rows.some(row => {
+      // 🔥 Исправление: НЕ объявляем новую переменную!
+      hasVoted = allRows.some(row => {
         const rowTime = new Date(row.timestamp);
-        const valid = row.ip === clientIP && !isNaN(rowTime) && rowTime > oneDayAgo;
-        if (valid) {
-          console.log(`✅ Найден дубль: IP=${row.ip}, время=${row.timestamp}`);
-        }
-        return valid;
+        return row.ip === clientIP && !isNaN(rowTime) && rowTime > oneDayAgo;
       });
+
+      console.log(`🔍 Проверка IP: ${clientIP}, найдено записей: ${allRows.length}, дубль: ${hasVoted}`);
     } catch (e) {
       console.error('⚠️ Не удалось проверить IP:', e.message);
-      // Не блокируем — продолжаем без защиты
+      // Не блокируем — но лучше не пропускать
+      hasVoted = false;
     }
 
     if (hasVoted) {
