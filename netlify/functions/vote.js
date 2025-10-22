@@ -3,7 +3,6 @@ const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { GoogleAuth } = require('google-auth-library');
 
 exports.handler = async (event, context) => {
-  // CORS Headers
   const headers = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type',
@@ -23,63 +22,103 @@ exports.handler = async (event, context) => {
   }
 
   try {
-    const body = JSON.parse(event.body);
-    const { email, nominations } = body;
+    // === 1. Парсинг входных данных ===
+    let body, email, nominations;
+    try {
+      body = JSON.parse(event.body);
+      email = body.email;
+      nominations = body.nominations;
+    } catch (e) {
+      console.error('❌ Ошибка парсинга JSON:', e.message);
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Неверный формат данных' }),
+      };
+    }
 
+    if (!email || !nominations || Object.keys(nominations).length === 0) {
+      console.error('❌ Нет email или номинаций');
+      return {
+        statusCode: 400,
+        headers,
+        body: JSON.stringify({ error: 'Не хватает данных' }),
+      };
+    }
+
+    // === 2. Получение IP ===
     const clientIP = event.headers['x-forwarded-for']?.split(',')[0].trim() || 
                      event.headers['x-real-ip'] || 'unknown';
+    console.log('📥 IP:', clientIP);
 
     const now = new Date();
     const timestamp = now.toISOString();
 
+    // === 3. Настройка доступа к Google Таблице ===
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
     let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
-if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
-  PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
-}
+
+    // Обработка переносов строк
+    if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
+      PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
+    }
 
     if (!SHEET_ID || !CLIENT_EMAIL || !PRIVATE_KEY) {
-      console.error('Missing env vars:', { SHEET_ID, CLIENT_EMAIL, PRIVATE_KEY: !!PRIVATE_KEY });
+      console.error('❌ Не заданы переменные окружения');
       return {
         statusCode: 500,
         headers,
-        body: JSON.stringify({ error: 'Server misconfiguration' }),
+        body: JSON.stringify({ error: 'Ошибка сервера' }),
       };
     }
 
-    // ✅ Новая авторизация для google-spreadsheet v4+
-    const auth = new GoogleAuth({
-      credentials: {
-        client_email: CLIENT_EMAIL,
-        private_key: PRIVATE_KEY,
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
-    const doc = new GoogleSpreadsheet(SHEET_ID, auth);
-    await doc.loadInfo();
+    // === 4. Авторизация ===
+    let auth, doc;
+    try {
+      auth = new GoogleAuth({
+        credentials: { client_email: CLIENT_EMAIL, private_key: PRIVATE_KEY },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      });
+      doc = new GoogleSpreadsheet(SHEET_ID, auth);
+      await doc.loadInfo();
+    } catch (e) {
+      console.error('❌ Ошибка авторизации в Google:', e.message);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: 'Ошибка подключения к таблице' }),
+      };
+    }
 
     const votesSheet = doc.sheetsByTitle['votes'];
     const logSheet = doc.sheetsByTitle['ip_log'];
 
     if (!votesSheet || !logSheet) {
+      console.error('❌ Не найдены листы votes или ip_log');
       return {
         statusCode: 500,
         headers,
-        body: JSON.stringify({ error: 'Sheets not found' }),
+        body: JSON.stringify({ error: 'Таблица настроена неверно' }),
       };
     }
 
-    const rows = await logSheet.getRows();
-    const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
-
-    const hasVoted = rows.some(row => {
-      const rowTime = new Date(row.timestamp);
-      return row.ip === clientIP && rowTime > oneDayAgo;
-    });
+    // === 5. Проверка по IP (только последние 100 строк) ===
+    let hasVoted = false;
+    try {
+      const rows = await logSheet.getRows({ limit: 100 }); // ← ограничение!
+      const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+      hasVoted = rows.some(row => {
+        const rowTime = new Date(row.timestamp);
+        return row.ip === clientIP && rowTime > oneDayAgo;
+      });
+    } catch (e) {
+      console.error('⚠️ Не удалось проверить IP (продолжаем без защиты):', e.message);
+      // Не блокируем — продолжаем голосование
+    }
 
     if (hasVoted) {
+      console.log('🚫 Уже голосовал:', clientIP);
       return {
         statusCode: 403,
         headers,
@@ -87,17 +126,36 @@ if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
       };
     }
 
-    await votesSheet.addRow({
-      timestamp,
-      email,
-      ...nominations
-    });
+    // === 6. Запись голоса ===
+    try {
+      await votesSheet.addRow({
+        timestamp,
+        email,
+        ...nominations
+      });
+      console.log('✅ Голос записан');
+    } catch (e) {
+      console.error('❌ Ошибка записи голоса:', e.message);
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: 'Не удалось сохранить голос' }),
+      };
+    }
 
-    await logSheet.addRow({
-      ip: clientIP,
-      timestamp
-    });
+    // === 7. Логирование IP ===
+    try {
+      await logSheet.addRow({
+        ip: clientIP,
+        timestamp
+      });
+      console.log('📝 IP залогирован');
+    } catch (e) {
+      console.error('⚠️ Не удалось записать IP:', e.message);
+      // Не критично — продолжаем
+    }
 
+    // === 8. Успех ===
     return {
       statusCode: 200,
       headers,
@@ -105,7 +163,7 @@ if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
     };
 
   } catch (error) {
-    console.error('Error:', error);
+    console.error('💥 Необработанная ошибка:', error);
     return {
       statusCode: 500,
       headers,
