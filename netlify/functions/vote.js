@@ -106,12 +106,13 @@ exports.handler = async (event, context) => {
     // === 5. Проверка по IP (только последние 100 строк) ===
     let hasVoted = false;
     try {
-      const rows = await logSheet.getRows({ limit: 100 }); // ← ограничение!
-      const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
-      hasVoted = rows.some(row => {
-        const rowTime = new Date(row.timestamp);
-        return row.ip === clientIP && rowTime > oneDayAgo;
-      });
+      const allRows = await logSheet.getRows({ limit: 500 }); // ← безопасный лимит
+const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+
+const hasVoted = allRows.some(row => {
+  const rowTime = new Date(row.timestamp);
+  return row.ip === clientIP && !isNaN(rowTime) && rowTime > oneDayAgo;
+});
     } catch (e) {
       console.error('⚠️ Не удалось проверить IP (продолжаем без защиты):', e.message);
       // Не блокируем — продолжаем голосование
