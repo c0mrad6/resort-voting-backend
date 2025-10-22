@@ -59,7 +59,6 @@ exports.handler = async (event, context) => {
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
     let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 
-    // Обработка переносов строк
     if (PRIVATE_KEY && PRIVATE_KEY.includes('\\n')) {
       PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
     }
@@ -106,20 +105,28 @@ exports.handler = async (event, context) => {
     // === 5. Проверка по IP (только последние 100 строк) ===
     let hasVoted = false;
     try {
-      const allRows = await logSheet.getRows({ limit: 500 }); // ← безопасный лимит
-const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+      const rows = await logSheet.getRows({ limit: 100 }); // ← ограничение!
+      const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
 
-const hasVoted = allRows.some(row => {
-  const rowTime = new Date(row.timestamp);
-  return row.ip === clientIP && !isNaN(rowTime) && rowTime > oneDayAgo;
-});
+      console.log(`🔍 Проверка IP: ${clientIP}`);
+      console.log(`📅 24 часа назад: ${oneDayAgo.toISOString()}`);
+      console.log(`📄 Загружено строк из ip_log: ${rows.length}`);
+
+      hasVoted = rows.some(row => {
+        const rowTime = new Date(row.timestamp);
+        const valid = row.ip === clientIP && !isNaN(rowTime) && rowTime > oneDayAgo;
+        if (valid) {
+          console.log(`✅ Найден дубль: IP=${row.ip}, время=${row.timestamp}`);
+        }
+        return valid;
+      });
     } catch (e) {
-      console.error('⚠️ Не удалось проверить IP (продолжаем без защиты):', e.message);
-      // Не блокируем — продолжаем голосование
+      console.error('⚠️ Не удалось проверить IP:', e.message);
+      // Не блокируем — продолжаем без защиты
     }
 
     if (hasVoted) {
-      console.log('🚫 Уже голосовал:', clientIP);
+      console.log('🚫 Отказано: уже голосовал');
       return {
         statusCode: 403,
         headers,
@@ -134,7 +141,7 @@ const hasVoted = allRows.some(row => {
         email,
         ...nominations
       });
-      console.log('✅ Голос записан');
+      console.log('✅ Голос записан в votes');
     } catch (e) {
       console.error('❌ Ошибка записи голоса:', e.message);
       return {
@@ -150,10 +157,10 @@ const hasVoted = allRows.some(row => {
         ip: clientIP,
         timestamp
       });
-      console.log('📝 IP залогирован');
+      console.log('📝 IP залогирован в ip_log');
     } catch (e) {
       console.error('⚠️ Не удалось записать IP:', e.message);
-      // Не критично — продолжаем
+      // Не критично
     }
 
     // === 8. Успех ===
