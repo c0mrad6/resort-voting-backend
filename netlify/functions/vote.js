@@ -2,9 +2,8 @@
 const { GoogleSpreadsheet } = require('google-spreadsheet');
 const { GoogleAuth } = require('google-auth-library');
 
-// In-memory кэш
+// Только основная защита
 const ipVoteCache = new Map(); // 24 часа
-const ipRateCache = new Map(); // 2 секунды
 
 exports.handler = async (event, context) => {
   const headers = {
@@ -19,47 +18,29 @@ exports.handler = async (event, context) => {
   try {
     const body = JSON.parse(event.body);
 
-    // === 1. Honeypot ===
-    if (body.website) {
-      console.log('🤖 Honeypot сработал');
-      return { statusCode: 200, headers, body: '{}' };
-    }
+    // Honeypot
+    if (body.website) return { statusCode: 200, headers, body: '{}' };
 
-    // === 2. Валидация email ===
+    // Валидация
     const { email, nominations } = body;
-    if (!email || !email.includes('@') || !nominations) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Неверный email или нет номинаций' }) };
+    if (!email || !email.includes('@') || !nominations || Object.keys(nominations).length === 0) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Нет email или номинаций' }) };
     }
 
-    // === 3. IP и время ===
     const clientIP = event.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
-    const now = new Date();
-    const timestamp = now.toISOString(); // ← ОПРЕДЕЛЕНО здесь
+    const now = Date.now();
 
-    // === 4. Определяем номинацию (только одна за раз) ===
+    // Проверка КАЖДОЙ номинации на дубль
     const nominationKeys = Object.keys(nominations);
-    if (nominationKeys.length !== 1) {
-      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Только одна номинация за раз' }) };
-    }
-    const nomination = nominationKeys[0];
-    const candidate = nominations[nomination];
-
-    // === 5. Rate limiting по номинации (2 сек) ===
-    const rateKey = `${clientIP}:${nomination}`;
-    const lastRequest = ipRateCache.get(rateKey);
-    if (lastRequest && now.getTime() - lastRequest < 2000) {
-      return { statusCode: 429, headers, body: JSON.stringify({ error: 'Подождите 2 секунды в этой номинации' }) };
-    }
-    ipRateCache.set(rateKey, now.getTime());
-
-    // === 6. Защита по номинации (24 часа) ===
-    const voteKey = `${clientIP}:${nomination}`;
-    const lastVote = ipVoteCache.get(voteKey);
-    if (lastVote && now.getTime() - lastVote < 24 * 60 * 60 * 1000) {
-      return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в этой номинации за последние 24 часа.` }) };
+    for (const nomination of nominationKeys) {
+      const voteKey = `${clientIP}:${nomination}`;
+      const lastVote = ipVoteCache.get(voteKey);
+      if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
+        return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в "${nomination}"` }) };
+      }
     }
 
-    // === 7. Запись в Google Таблицу ===
+    // Запись в таблицу
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
     let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
@@ -67,28 +48,24 @@ exports.handler = async (event, context) => {
       PRIVATE_KEY = PRIVATE_KEY.replace(/\\n/g, '\n');
     }
 
-    const auth = new GoogleAuth({
-      credentials: { client_email: CLIENT_EMAIL, private_key: PRIVATE_KEY },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
+    const auth = new GoogleAuth({ credentials: { client_email: CLIENT_EMAIL, private_key: PRIVATE_KEY }, scopes: ['https://www.googleapis.com/auth/spreadsheets'] });
     const doc = new GoogleSpreadsheet(SHEET_ID, auth);
     await doc.loadInfo();
 
     const votesSheet = doc.sheetsByTitle['votes'];
-    if (!votesSheet) {
-      return { statusCode: 500, headers, body: JSON.stringify({ error: 'Лист votes не найден' }) };
-    }
+    if (!votesSheet) return { statusCode: 500, headers, body: JSON.stringify({ error: 'Лист не найден' }) };
 
     await votesSheet.addRow({
-      timestamp,
+      timestamp: new Date().toISOString(),
       email,
       ip: clientIP,
-      nomination,
-      [nomination]: candidate, // ← заполняет best_spa, best_hotel и т.д.
+      ...nominations // ← заполняет ТОЛЬКО указанные столбцы
     });
 
-    ipVoteCache.set(voteKey, now.getTime());
+    // Сохраняем в кэш
+    for (const nomination of nominationKeys) {
+      ipVoteCache.set(`${clientIP}:${nomination}`, now);
+    }
 
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Ваш голос учтён!' }) };
 
