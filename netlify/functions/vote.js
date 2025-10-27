@@ -56,7 +56,7 @@ exports.handler = async (event, context) => {
     const voteKey = `${clientIP}:${nomination}`;
     const lastVote = ipVoteCache.get(voteKey);
     if (lastVote && now.getTime() - lastVote < 24 * 60 * 60 * 1000) {
-      return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в номинации "${nomination}" за последние 24 часа.` }) };
+      return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в этой номинации за последние 24 часа.` }) };
     }
 
     // === 7. Запись в Google Таблицу ===
