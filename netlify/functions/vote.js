@@ -36,7 +36,7 @@ exports.handler = async (event, context) => {
       const voteKey = `${clientIP}:${nomination}`;
       const lastVote = ipVoteCache.get(voteKey);
       if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
-        return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в "${nomination}"` }) };
+        return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в этих номинациях` }) };
       }
     }
 
