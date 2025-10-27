@@ -41,6 +41,7 @@ if (nominationKeys.length !== 1) {
   return { statusCode: 400, headers, body: JSON.stringify({ error: 'Только одна номинация за раз' }) };
 }
 const nomination = nominationKeys[0]; // например, 'best_spa'
+const candidate = nominations[nomination];
 
 // === 5. Rate limiting: 1 запрос в 2 секунды ПО НОМИНАЦИИ ===
 const rateKey = `${clientIP}:${nomination}`;
@@ -79,11 +80,13 @@ if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
     }
 
     await votesSheet.addRow({
-      timestamp: new Date().toISOString(),
-      email,
-      ip: clientIP,
-      ...nominations,
-    });
+  timestamp,
+  email,
+  ip: clientIP,
+  nomination,   // ← новое поле
+  candidate,    // ← новое поле
+  ...nominations // ← старые поля (остаются для совместимости)
+});
 
     ipVoteCache.set(voteKey, now);
 
