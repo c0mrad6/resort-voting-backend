@@ -35,20 +35,29 @@ exports.handler = async (event, context) => {
     const clientIP = event.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
     const now = Date.now();
 
-    // === 4. Rate limiting: 1 запрос в 2 секунды на IP (глобально) ===
-    const lastRequest = ipRateCache.get(clientIP);
-    if (lastRequest && now - lastRequest < 2000) {
-      return { statusCode: 429, headers, body: JSON.stringify({ error: 'Подождите 2 секунды' }) };
-    }
-    ipRateCache.set(clientIP, now);
+    // === 5. Определяем номинацию (поддерживаем только одну за раз) ===
+const nominationKeys = Object.keys(nominations);
+if (nominationKeys.length !== 1) {
+  return { statusCode: 400, headers, body: JSON.stringify({ error: 'Только одна номинация за раз' }) };
+}
+const nomination = nominationKeys[0]; // например, 'best_spa'
 
-    // === 5. Защита: 1 голос в 24 часа на IP (глобально) ===
-    const lastVote = ipVoteCache.get(clientIP);
-    if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
-      return { statusCode: 403, headers, body: JSON.stringify({ error: 'Вы уже голосовали за последние 24 часа.' }) };
-    }
+// === 6. Rate limiting: 1 запрос в 2 секунды ПО НОМИНАЦИИ ===
+const rateKey = `${clientIP}:${nomination}`;
+const lastRequest = ipRateCache.get(rateKey);
+if (lastRequest && now - lastRequest < 2000) {
+  return { statusCode: 429, headers, body: JSON.stringify({ error: 'Подождите 2 секунды в этой номинации' }) };
+}
+ipRateCache.set(rateKey, now);
 
-    // === 6. Запись в Google Таблицу ===
+// === 7. Защита: 1 голос в 24 часа ПО НОМИНАЦИИ ===
+const voteKey = `${clientIP}:${nomination}`;
+const lastVote = ipVoteCache.get(voteKey);
+if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
+  return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в номинации "${nomination}" за последние 24 часа.` }) };
+}
+
+    // === 8. Запись в Google Таблицу ===
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
     const CLIENT_EMAIL = process.env.GOOGLE_CLIENT_EMAIL;
     let PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
