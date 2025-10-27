@@ -31,32 +31,33 @@ exports.handler = async (event, context) => {
       return { statusCode: 400, headers, body: JSON.stringify({ error: 'Неверный email или нет номинаций' }) };
     }
 
-    // === 3. IP ===
+    // === 3. IP и время ===
     const clientIP = event.headers['x-forwarded-for']?.split(',')[0].trim() || 'unknown';
-    const now = Date.now();
+    const now = new Date();
+    const timestamp = now.toISOString(); // ← ОПРЕДЕЛЕНО здесь
 
-    // === 4. Определяем номинацию (поддерживаем только одну за раз) ===
-const nominationKeys = Object.keys(nominations);
-if (nominationKeys.length !== 1) {
-  return { statusCode: 400, headers, body: JSON.stringify({ error: 'Только одна номинация за раз' }) };
-}
-const nomination = nominationKeys[0]; // например, 'best_spa'
-const candidate = nominations[nomination];
+    // === 4. Определяем номинацию (только одна за раз) ===
+    const nominationKeys = Object.keys(nominations);
+    if (nominationKeys.length !== 1) {
+      return { statusCode: 400, headers, body: JSON.stringify({ error: 'Только одна номинация за раз' }) };
+    }
+    const nomination = nominationKeys[0];
+    const candidate = nominations[nomination];
 
-// === 5. Rate limiting: 1 запрос в 2 секунды ПО НОМИНАЦИИ ===
-const rateKey = `${clientIP}:${nomination}`;
-const lastRequest = ipRateCache.get(rateKey);
-if (lastRequest && now - lastRequest < 2000) {
-  return { statusCode: 429, headers, body: JSON.stringify({ error: 'Подождите 2 секунды в этой номинации' }) };
-}
-ipRateCache.set(rateKey, now);
+    // === 5. Rate limiting по номинации (2 сек) ===
+    const rateKey = `${clientIP}:${nomination}`;
+    const lastRequest = ipRateCache.get(rateKey);
+    if (lastRequest && now.getTime() - lastRequest < 2000) {
+      return { statusCode: 429, headers, body: JSON.stringify({ error: 'Подождите 2 секунды в этой номинации' }) };
+    }
+    ipRateCache.set(rateKey, now.getTime());
 
-// === 6. Защита: 1 голос в 24 часа ПО НОМИНАЦИИ ===
-const voteKey = `${clientIP}:${nomination}`;
-const lastVote = ipVoteCache.get(voteKey);
-if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
-  return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в номинации "${nomination}" за последние 24 часа.` }) };
-}
+    // === 6. Защита по номинации (24 часа) ===
+    const voteKey = `${clientIP}:${nomination}`;
+    const lastVote = ipVoteCache.get(voteKey);
+    if (lastVote && now.getTime() - lastVote < 24 * 60 * 60 * 1000) {
+      return { statusCode: 403, headers, body: JSON.stringify({ error: `Вы уже голосовали в номинации "${nomination}" за последние 24 часа.` }) };
+    }
 
     // === 7. Запись в Google Таблицу ===
     const SHEET_ID = process.env.GOOGLE_SHEET_ID;
@@ -80,15 +81,14 @@ if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
     }
 
     await votesSheet.addRow({
-  timestamp,
-  email,
-  ip: clientIP,
-  nomination,   // ← новое поле
-  candidate,    // ← новое поле
-  ...nominations // ← старые поля (остаются для совместимости)
-});
+      timestamp,
+      email,
+      ip: clientIP,
+      nomination,
+      [nomination]: candidate, // ← заполняет best_spa, best_hotel и т.д.
+    });
 
-    ipVoteCache.set(voteKey, now);
+    ipVoteCache.set(voteKey, now.getTime());
 
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Ваш голос учтён!' }) };
 
