@@ -85,7 +85,7 @@ if (lastVote && now - lastVote < 24 * 60 * 60 * 1000) {
       ...nominations,
     });
 
-    ipVoteCache.set(clientIP, now);
+    ipVoteCache.set(voteKey, now);
 
     return { statusCode: 200, headers, body: JSON.stringify({ success: true, message: 'Ваш голос учтён!' }) };
 
